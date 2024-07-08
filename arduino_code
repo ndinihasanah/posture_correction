@@ -1,0 +1,21 @@
+int sensor = 0;
+
+void setup()
+{
+  pinMode(A0, INPUT);
+  pinMode(8, OUTPUT); // This will be the pin connected to the buzzer
+  Serial.begin(9600);
+}
+
+void loop()
+{
+  sensor = analogRead(A0);
+  if (sensor < 150) {
+    digitalWrite(8, HIGH); // Turn the buzzer on
+  } else {
+    digitalWrite(8, LOW); // Turn the buzzer off
+  }
+  Serial.print("sensor = ");
+  Serial.println(sensor);
+  delay(100); // Wait for 100 milliseconds
+}
