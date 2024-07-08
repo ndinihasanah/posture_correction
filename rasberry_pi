@@ -1,0 +1,108 @@
+import serial
+import time
+import pyrebase
+import requests
+
+# Firebase configuration
+firebase_config = {
+    "apiKey": "AIzaSyCuT4ekScRg6KgcMQ9UU-tXf_AHUZgArV8",
+    "authDomain": "backposture-77665.firebaseapp.com",
+    "databaseURL": "https://backposture-77665-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "storageBucket": "backposture-77665.appspot.com"
+}
+
+# Initialize Firebase
+firebase = pyrebase.initialize_app(firebase_config)
+db = firebase.database()
+
+# Telegram bot setup
+API_TOKEN = '7229800233:AAETOq1kcLneMjb5MeICrOUg7__eyyiiv30'  # Replace with your correct token
+CHAT_ID = '741617179'
+
+# Function to initialize serial connection
+def init_serial_connection():
+    try:
+        ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)  # Update port if necessary
+        time.sleep(2)  # Give some time for the serial connection to initialize
+        return ser
+    except serial.SerialException as e:
+        print(f"Initial Serial error: {e}")
+        return None
+
+# Function to calculate the moving average
+def moving_average(data, window_size=5):
+    if len(data) < window_size:
+        return sum(data) / len(data)
+    else:
+        return sum(data[-window_size:]) / window_size
+
+# Function to send a message to Telegram
+def send_telegram_message(message):
+    url = f'https://api.telegram.org/bot{API_TOKEN}/sendMessage'
+    data = {'chat_id': CHAT_ID, 'text': message}
+    print("Sending message to Telegram")
+    try:
+        response = requests.post(url, data=data)
+        if response.status_code != 200:
+            print(f"Failed to send message: {response.status_code} - {response.text}")
+        else:
+            print("Message sent successfully")
+    except requests.exceptions.RequestException as e:
+        print(f"Error sending message: {e}")
+
+# Initialize serial connection
+ser = init_serial_connection()
+last_value = None
+threshold = 5  # Significant change threshold
+window_size = 5  # Moving average window size
+sensor_values = []  # List to store sensor values for averaging
+alert_threshold = 30  # Threshold for alert based on degree value
+
+while True:
+    try:
+        if ser is None:
+            ser = init_serial_connection()
+            if ser is None:
+                time.sleep(1)  # Wait a bit before retrying
+                continue
+
+        raw_data = ser.readline().decode().strip()
+        print(f"Raw data: {raw_data}")
+
+        if "sensor" in raw_data:
+            try:
+                sensor_value = int(raw_data.split(" = ")[1])
+            except (IndexError, ValueError):
+                print("Failed to parse sensor value from raw data.")
+                continue
+
+            sensor_values.append(sensor_value)
+            smoothed_value = moving_average(sensor_values, window_size)
+            degree_value = -0.6 * smoothed_value + 120  # Corrected calibration formula
+
+            if last_value is None or abs(smoothed_value - last_value) > threshold:
+                data = {
+                    "sensor_value": smoothed_value,
+                    "degree_value": degree_value,
+                    "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                db.child("posture_data").push(data)
+                print(f"Sensor: {smoothed_value} (Degree: {degree_value:.2f})")
+                send_telegram_message(f"Sensor: {smoothed_value}, Degree: {degree_value:.2f}")
+                last_value = smoothed_value
+
+                # Check if the degree value is less than the alert threshold
+                if degree_value > alert_threshold:
+                    send_telegram_message("Please correct your posture!")
+
+    except ValueError:
+        print("Failed to convert sensor value to an integer.")
+    except KeyboardInterrupt:
+        print("Script interrupted. Closing the serial connection.")
+        if ser is not None:
+            ser.close()
+        break
+    except serial.SerialException as e:
+        print(f"Serial error: {e}")
+        if ser is not None:
+            ser.close()
